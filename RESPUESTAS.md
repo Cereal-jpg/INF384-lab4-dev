@@ -15,6 +15,13 @@ Presupuesto: 11 min  Métrica DORA: time to restore
   deploy      2026-10-29T21:22:58Z  2026-10-29T21:23:24Z
   ```
   `smoke` empezó 1 s antes que `deploy`. Su step `URL` estuvo de 21:23:01 a 21:23:26 reintentando hasta que `deploy` creó la Function URL (el log de `deploy` la imprime a las 21:23:22). Si `smoke` hubiera encontrado una URL ya creada, habría probado la versión anterior.
+
+  Después de la corrección, run https://github.com/Cereal-jpg/INF384-lab4-dev/actions/runs/40959109982:
+  ```
+  deploy      2026-10-29T21:36:58Z  2026-10-29T21:37:13Z
+  smoke       2026-10-29T21:37:15Z  2026-10-29T21:37:25Z
+  ```
+  `smoke` arranca 2 s después de que `deploy` termina.
 ### Defecto 2
 - Job y etapa: `smoke`, etapa deploy en el pipeline original (post-deploy tras corregir el defecto 1).
 - Problema que causa en el pipeline: `test/smoke/smoke.sh` solo compara `/version` con el commit esperado si recibe `EXPECTED_COMMIT`, y `ci.yml` no se lo pasaba. `smoke` daba verde con cualquier versión que respondiera `/salud`, incluida la anterior o la de otro run (por ejemplo, un PR que despliega en la misma función).
@@ -24,6 +31,12 @@ Presupuesto: 11 min  Métrica DORA: time to restore
   ```
   2026-10-29T21:23:27.7273473Z salud: {"ok":true,"version":"1.0.0","commit":"49ba49ebee84f4c9f8b6943031595970311a3bb6"}
   2026-10-29T21:23:27.9294522Z saldo: {"usuario":"ana","saldo":1000}
+  ```
+  Después de la corrección, log de `smoke` del run https://github.com/Cereal-jpg/INF384-lab4-dev/actions/runs/40959109982. Aparece la verificación del commit esperado:
+  ```
+  2026-10-29T21:37:22.9065927Z salud: {"ok":true,"version":"1.0.0","commit":"03d2e7ebc5c95ef5721c1441c0454cf71bb27f4f"}
+  2026-10-29T21:37:23.0287303Z commit: 03d2e7ebc5c95ef5721c1441c0454cf71bb27f4f
+  2026-10-29T21:37:23.1805504Z saldo: {"usuario":"ana","saldo":1000}
   ```
 ### Defecto 3
 - Job y etapa: nivel de workflow. Afecta a `deploy` (etapa deploy) y a `smoke`, `e2e` y `load` (etapa post-deploy).
@@ -35,6 +48,12 @@ Presupuesto: 11 min  Métrica DORA: time to restore
   175:    concurrency:
   ```
   La única concurrency es la del job `deploy`. Ni el workflow ni los jobs post-deploy la tienen.
+
+  Efecto de la corrección: el run del PR https://github.com/Cereal-jpg/INF384-lab4-dev/actions/runs/40959211010 (creado a las 21:36:26Z) quedó en estado `pending`, con 0 jobs iniciados, mientras el run de `main` https://github.com/Cereal-jpg/INF384-lab4-dev/actions/runs/40959109982 seguía `in_progress` (en `load`). Salida de `gh run list` a las 21:39:03Z:
+  ```
+  pending      Defecto de la aplicación: validarMonto acepta monto cero  ci  defecto/monto-cero  pull_request  40959211010  2m38s
+  in_progress  docs: RESPUESTAS Parte 1                                  ci  main                push          40959109982  3m20s
+  ```
 ### Defecto 4
 - Job y etapa: `sca`, etapa pre-build.
 - Problema que causa en el pipeline: `--include-dev-deps` hace que Trivy escanee el árbol completo, con `@playwright/test`, `c8`, `esbuild` y sus dependencias. El `Dockerfile` hace `npm prune --omit=dev`, así que esas dependencias no llegan a la imagen. Con `--exit-code 1`, una vulnerabilidad HIGH o CRITICAL en una herramienta de desarrollo detiene el pipeline aunque no se despliegue. Además escanea unas 3 veces más paquetes de los que corresponden.
@@ -84,11 +103,17 @@ Presupuesto: 11 min  Métrica DORA: time to restore
   ```
 
 ## Parte 2 · Implementación
-- Link al run en verde en main:
-- Link al pull request:
-- Defecto de la aplicación introducido (archivo y descripción):
-- Job que debería detenerlo:
-- Link al run fallido:
+- Link al run en verde en main: https://github.com/Cereal-jpg/INF384-lab4-dev/actions/runs/40959109982 (commit `03d2e7e`, que tiene en su historial los cinco commits de la Parte 1)
+- Link al pull request: https://github.com/Cereal-jpg/INF384-lab4-dev/pull/1
+- Defecto de la aplicación introducido (archivo y descripción): `src/util.js`, función `validarMonto`. La condición `monto <= 0` pasa a `monto < 0`, así que un monto de `0` se acepta como válido. La regla de `/transferir` exige 400 si el monto es menor o igual a cero. Con el defecto, `POST /transferir` con `monto: 0` pasa la validación de negocio y llega a la base, donde el `CHECK (monto > 0)` de `movimientos` lo rechaza. El cliente recibe un 500 (`error interno`) en lugar de un 400 con el mensaje `monto debe ser mayor que cero`.
+- Job que debería detenerlo: `unit` (etapa pre-build). Lo detectan los tests `validarMonto rechaza cero` (test/unit/util.test.js) y `transferir con monto invalido es 400` (test/unit/wallet.test.js). Salida local con Node 20:
+  ```
+  not ok 4 - validarMonto rechaza cero
+  not ok 27 - transferir con monto invalido es 400
+  # pass 26
+  # fail 2
+  ```
+- Link al run fallido: https://github.com/Cereal-jpg/INF384-lab4-dev/actions/runs/40959211010
 
 ## Parte 3 · Decisión bajo restricción
 Link al run medido:
