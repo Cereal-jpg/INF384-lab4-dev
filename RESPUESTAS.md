@@ -149,22 +149,37 @@ Resultado de load en ese run:
 | Tasa de error | 0.00 % (0 de 36240) |
 | Requests por segundo | 50.26 req/s (36240 requests) |
 
-Conclusión sobre el comportamiento bajo carga:
+Conclusión sobre el comportamiento bajo carga: con 30 VUs sostenidos durante 10 min (50 req/s), Monedero Andino no muestra saturación. La latencia es estable y concentrada (mediana 46.72 ms, p90 53.7 ms, p95 56.35 ms; entre p90 y p95 hay menos de 3 ms) y no hubo ningún request fallido (0 de 36240). El máximo de 1.86 s es un valor aislado, unas 33 veces el p95. Es coherente con cold starts de Lambda: cada run despliega una imagen nueva y durante la rampa se crean instancias nuevas, cada una con su base SQLite en `/tmp`. Ese valor afecta la cola extrema, pero no los percentiles. Conclusión: a esta carga la función tiene amplio margen; el riesgo de latencia está en los arranques en frío, no en la carga sostenida.
 
-SLO propuesto (percentil, valor, ventana) y justificación:
+SLO propuesto (percentil, valor, ventana) y justificación: **p95 de la latencia de las requests a la API < 200 ms**, medido en producción en una **ventana móvil de 28 días**. En el pipeline la ventana es la duración del test de carga (`SLO_P95: 200` en `ci.yml`). Uso el p95 y no el máximo porque el máximo está dominado por cold starts aislados (1.86 s) que no representan la experiencia típica; el p95 sí la representa y fue estable (56.35 ms). Elegí 200 ms y no un valor pegado a lo medido (por ejemplo 60 o 70 ms) porque entre runs varían los cold starts, el estado de la región y la cantidad de instancias. Un umbral de 60 ms haría fallar `load` sin que haya un defecto (falso rojo). 200 ms deja unas 3,5 veces de margen sobre el p95 medido y sigue detectando una regresión real, por ejemplo una consulta que pase de 50 a 250 ms. Además, una billetera con p95 bajo 200 ms se percibe como instantánea.
 
-SLA propuesto y diferencia con el SLO:
+SLA propuesto y diferencia con el SLO: **el 95 % de las requests responde en menos de 1 s, y disponibilidad mensual del 99,5 %** (respuestas no 5xx), medido por mes calendario. Si no se cumple, el cliente recibe una compensación (crédito o bonificación). El SLO es una meta interna de ingeniería: guía decisiones (por ejemplo, detener un despliegue en `load`) y su incumplimiento no tiene consecuencias contractuales. El SLA es un compromiso contractual con los clientes y su incumplimiento tiene penalidad. Por eso el SLA es más laxo que el SLO (1 s contra 200 ms): la diferencia es el margen que permite al equipo detectar y corregir una degradación cuando se incumple el SLO, antes de llegar a incumplir el contrato. Si ambos tuvieran el mismo valor, cada desvío del SLO ya sería un incumplimiento con penalidad.
 
 Cambios para cumplir el presupuesto:
 | Cambio | Job | Minutos recuperados |
 |---|---|---|
+| Stages de `test/load/transferir.js` de `1m / 10m / 1m` a `30s / 4m / 30s` (carga constante de 4 min, el mínimo permitido) | load | 7:02 (de 12:12 a 5:10) |
+| `SLO_P95` de 500 a 200 ms (punto 2; no cambia la duración) | load | 0:00 |
 
-Total resultante: [ ] min
-Link al run en main con los cambios:
+Duración por job en el run con los cambios: unit 0:11, integration 0:12, sast 0:19, sca 0:22, build-push 0:42, deploy 0:17, smoke 0:07, e2e 0:34, load 5:10. Calculadas con `started_at` y `completed_at` de la API de GitHub. Los demás jobs varían unos segundos entre runs; en total, el pipeline baja 7:12, de 15:06 a 7:54.
 
-Riesgo aceptado (defecto de la aplicación concreto y efecto en la métrica DORA asignada):
+Total resultante: **7:54 min** (presupuesto: 11 min, margen de 3:06)
+Link al run en main con los cambios: https://github.com/Cereal-jpg/INF384-lab4-dev/actions/runs/40961511153
 
-Decisión sobre sast (se queda / se mueve a otra etapa o evento / informativo) y razón:
+En ese run, `load` evaluó el nuevo SLO y pasó: `✓ 'p(95)<200' p(95)=74.83ms`, con p90 72.22 ms, máximo 425.63 ms, 0.00 % de error (0 de 14330) y 47.70 req/s. El p95 subió de 56 a 75 ms respecto del run anterior y sigue con margen de unas 2,7 veces bajo el SLO. Esto confirma que un SLO pegado a lo medido (por ejemplo 60 ms) habría hecho fallar este run sin que hubiera un defecto.
+
+Riesgo aceptado (defecto de la aplicación concreto y efecto en la métrica DORA asignada): al bajar la carga constante de 10 a 4 minutos, el pipeline detecta más tarde, o deja de detectar, **una degradación de latencia que crece con el volumen de datos**. Ejemplo concreto: en `src/db.js` se quita el `LIMIT 50` de la consulta de `historial`, o la consulta `WHERE origen = ? OR destino = ?` sobre `movimientos` hace un recorrido completo de la tabla. Cada transferencia de `load` inserta una fila en `movimientos`. En el run medido hubo 18120 iteraciones en 10 min; con 4 min hay unas 2,5 veces menos filas. La consulta se vuelve lenta solo cuando la tabla es grande, así que en 4 min el p95 puede quedar bajo los 200 ms y `load` dar verde. El defecto llega a producción, donde la tabla crece sin límite, y la latencia se degrada de forma gradual hasta incumplir el SLO.
+
+Efecto en **time to restore: sube**. Una degradación gradual no dispara una alerta en el momento del despliegue como sí lo hace un 500. Se detecta tarde, cuando el p95 de producción cruza el SLO, días después y con varios despliegues de por medio. Además cuesta asociarla al cambio que la causó: hay que revisar varios commits, no solo el último. El tiempo desde que empieza el incidente hasta que se restaura el servicio aumenta. El pipeline más corto compensa solo una parte, porque el despliegue del rollback o del fix tarda unos 7 minutos menos (8 min en lugar de 15). Ese ahorro es pequeño frente a horas o días de detección tardía.
+
+Decisión sobre sast (se queda / se mueve a otra etapa o evento / informativo) y razón: **se queda**, como bloqueante en pre-build y en cada evento. Costo: 0:17 de los 15:06 del run medido (un 2 %). El presupuesto de 11 min ya se cumple recortando `load`, así que mover o quitar `sast` no es necesario para cumplirlo. Además, `sast` corre en paralelo con `unit` (0:15), `integration` (0:13) y `sca` (0:17), así que en tiempo real solo agrega unos 2 s antes de `build-push`. Efecto en **time to restore: no cambia** en la práctica. Cuando hay que restaurar con un hotfix o un revert, el pipeline tarda lo mismo con o sin `sast`, porque no está en el camino crítico. Si pasara a informativo o a post-deploy, un patrón inseguro (por ejemplo, SQL armado concatenando el usuario de la ruta) podría llegar a producción. Eso genera un incidente de seguridad cuya restauración (contención, parche, revisión de datos) es mucho más larga que 17 s de pipeline.
 
 ## Declaración de uso de IA
 Herramientas usadas y para qué:
+- **Claude Code (modelo Claude Opus 5.5, de Anthropic)**, como asistente en el editor (VS Code). Lo usé para:
+  - leer el repositorio (`ci.yml`, `package.json`, `test/`, `src/`, `Dockerfile`) y verificar los cinco defectos del pipeline que había identificado previamente;
+  - ejecutar comandos de verificación (tests con Node 20 en contenedor Docker, `npm ls`, Trivy, `gh run list` y la API de GitHub) y obtener la evidencia pegada en este documento;
+  - aplicar las correcciones (un commit por defecto), crear la rama con el defecto de la aplicación y abrir el pull request;
+  - redactar el texto de este documento (Partes 1 a 3).
+
+  Revisé y aprobé cada cambio, el push y cada decisión (defectos, SLO, SLA, recorte de `load`, decisión sobre `sast`) antes de entregar.
