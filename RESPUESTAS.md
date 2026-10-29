@@ -113,32 +113,41 @@ Presupuesto: 11 min  Métrica DORA: time to restore
   # pass 26
   # fail 2
   ```
-- Link al run fallido: https://github.com/Cereal-jpg/INF384-lab4-dev/actions/runs/40959211010
+- Link al run fallido: https://github.com/Cereal-jpg/INF384-lab4-dev/actions/runs/40959211010 (`unit` en rojo, por lo que `build-push`, `deploy` y las pruebas post-deploy no se ejecutan). Log de `unit`:
+  ```
+  2026-10-29T21:49:50.1270268Z not ok 4 - validarMonto rechaza cero
+  2026-10-29T21:49:50.1452152Z not ok 27 - transferir con monto invalido es 400
+  2026-10-29T21:49:50.1460463Z # pass 26
+  2026-10-29T21:49:50.1460639Z # fail 2
+  2026-10-29T21:49:50.1765351Z ##[error]Process completed with exit code 1.
+  ```
 
 ## Parte 3 · Decisión bajo restricción
-Link al run medido:
+Link al run medido: https://github.com/Cereal-jpg/INF384-lab4-dev/actions/runs/40959109982
 
 | Job | Duración (min:seg) |
 |---|---|
-| unit | |
-| integration | |
-| sast | |
-| sca | |
-| build-push | |
-| deploy | |
-| smoke | |
-| e2e | |
-| load | |
-| **Total** | |
+| unit | 0:15 |
+| integration | 0:13 |
+| sast | 0:17 |
+| sca | 0:17 |
+| build-push | 0:50 |
+| deploy | 0:15 |
+| smoke | 0:10 |
+| e2e | 0:37 |
+| load | 12:12 |
+| **Total** | **15:06** |
+
+(Duraciones calculadas con `started_at` y `completed_at` de cada job, según la API de GitHub.)
 
 Resultado de load en ese run:
 | Métrica | Valor |
 |---|---|
-| p90 | |
-| p95 | |
-| Máximo | |
-| Tasa de error | |
-| Requests por segundo | |
+| p90 | 53.7 ms |
+| p95 | 56.35 ms |
+| Máximo | 1.86 s |
+| Tasa de error | 0.00 % (0 de 36240) |
+| Requests por segundo | 50.26 req/s (36240 requests) |
 
 Conclusión sobre el comportamiento bajo carga:
 
