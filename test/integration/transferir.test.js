@@ -1,5 +1,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+process.env.DB_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wallet-')), 'wallet.db');
+
 const { handler } = require('../../src/handler');
 
 async function llamar(metodo, ruta, cuerpo) {
